@@ -1,31 +1,35 @@
 # BBTS — Gestão de Vagas · Backend
 
-API REST para gestão de vagas, aprovação RH, ranking de candidatos e importação de perfis.  
-Stack: **FastAPI · PostgreSQL · SQLAlchemy · Alembic · Docker**
+API REST com IA para extração de currículos, normalização por sinônimos e ranking explicável de candidatos.  
+Stack: **FastAPI · PostgreSQL · SQLAlchemy · Alembic · Docker · Google Gemini**
 
 ---
 
 ## Pré-requisitos
 
 - Docker + Docker Compose
-- **OU** Python 3.11+ e PostgreSQL local
+- Chave da API do Google Gemini → [aistudio.google.com](https://aistudio.google.com) (gratuita)
 
 ---
 
-## Subir com Docker (recomendado)
+## Instalação e execução
 
 ```bash
 # 1. Clone o repositório
 git clone https://github.com/cauagomesdev/bbts-vacancy-management-backend.git
 cd bbts-vacancy-management-backend
 
-# 2. Suba tudo
+# 2. Configure as variáveis de ambiente
+cp .env.example .env
+# Edite .env e preencha GEMINI_API_KEY=sua-chave-aqui
+
+# 3. Suba tudo
 docker compose up --build
 ```
 
-A API estará em **http://localhost:8000**  
-Swagger UI: **http://localhost:8000/docs**  
-ReDoc: **http://localhost:8000/redoc**
+**API:** http://localhost:8000  
+**Swagger:** http://localhost:8000/docs  
+**ReDoc:** http://localhost:8000/redoc
 
 ---
 
@@ -35,7 +39,7 @@ ReDoc: **http://localhost:8000/redoc**
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env             # ajuste DATABASE_URL se necessário
+cp .env.example .env             # ajuste DATABASE_URL e GEMINI_API_KEY
 alembic upgrade head
 python seed.py
 uvicorn app.main:app --reload --port 8000
@@ -52,7 +56,7 @@ docker compose exec api alembic upgrade head
 # Popular banco com dados de demonstração (executar uma vez)
 docker compose exec api python seed.py
 
-# Resetar dados de demo a qualquer momento
+# Resetar dados a qualquer momento
 docker compose exec api python seed.py
 ```
 
@@ -62,25 +66,29 @@ docker compose exec api python seed.py
 
 ```
 app/
-├── main.py              # FastAPI app, CORS, routers
-├── config.py            # Settings via .env
-├── database.py          # Engine + SessionLocal
-├── models.py            # Todos os modelos SQLAlchemy
-├── auth/                # Login fake JWT · guards
-├── vacancies/           # CRUD vagas + submit
-├── approvals/           # Approve/Reject (RH only) + dispara scoring
-├── candidates/          # Ranking por vaga + detalhe do candidato
-├── imports/             # Import CSV e JSON + IntegrationLog
-├── scoring/             # Motor de score (peso + penalidade obrigatórios)
-└── connectors/          # ProfileConnector — interface para Sprint 3+
+├── main.py                  # FastAPI app, CORS, routers
+├── config.py                # Settings via .env (inclui GEMINI_API_KEY)
+├── database.py              # Engine + SessionLocal
+├── models.py                # Todos os modelos SQLAlchemy
+├── auth/                    # Login fake JWT · guards
+├── vacancies/               # CRUD vagas + submit
+├── approvals/               # Approve/Reject (RH) + dispara scoring
+├── candidates/              # Ranking por vaga + listagem + detalhe
+├── imports/
+│   ├── pdf_extractor.py     # Integração Google Gemini (leitura de PDF)
+│   ├── service.py           # Import PDF/CSV/JSON + normalização sinônimos
+│   └── router.py            # Endpoints de importação
+├── scoring/
+│   └── engine.py            # Motor de score (peso + obrigatórios + localização)
+├── synonyms/
+│   └── dictionary.py        # Dicionário fixo de sinônimos (JS→javascript, etc.)
+└── connectors/
+    └── base.py              # ProfileConnector — interface para Sprint futura
 alembic/
-├── env.py
 └── versions/
-    ├── 001_initial.py   # Sprint 1: users, vacancies, requirements, approvals, audit
-    └── 002_sprint2.py   # Sprint 2: candidates (rico), integration_logs
-seed.py
-docker-compose.yml
-Dockerfile
+    ├── 001_initial.py       # Sprint 1: users, vacancies, requirements, approvals, audit
+    ├── 002_sprint2.py       # Sprint 2: candidates (rico), integration_logs
+    └── 003_sprint3.py       # Sprint 3: no-op (sinônimos são em código)
 ```
 
 ---
@@ -98,8 +106,8 @@ Dockerfile
 |--------|------|-----------|------|
 | GET | `/vacancies` | Listar vagas | REQUESTER (só suas) / RH (todas) |
 | POST | `/vacancies` | Criar vaga + requisitos | Todos |
-| GET | `/vacancies/:id` | Detalhe da vaga | Todos |
-| PATCH | `/vacancies/:id` | Editar vaga (apenas DRAFT) | Todos |
+| GET | `/vacancies/:id` | Detalhe + requisitos | Todos |
+| PATCH | `/vacancies/:id` | Editar (apenas DRAFT) | Todos |
 | POST | `/vacancies/:id/submit` | Submeter para aprovação | REQUESTER |
 
 ### Aprovações
@@ -112,14 +120,16 @@ Dockerfile
 ### Candidatos
 | Método | Rota | Descrição | Role |
 |--------|------|-----------|------|
-| GET | `/vacancies/:id/candidates` | Ranking de candidatos por score | Todos |
+| GET | `/vacancies/:id/candidates` | Ranking por vaga (score desc) | Todos |
+| GET | `/candidates` | Listar candidatos (filtros: skill, location) | Todos |
 | GET | `/candidates/:id` | Perfil completo do candidato | Todos |
 
-### Import
+### Importação
 | Método | Rota | Descrição | Role |
 |--------|------|-----------|------|
-| POST | `/candidates/import/json` | Importar candidatos via JSON | RH |
-| POST | `/candidates/import/csv` | Importar candidatos via CSV | RH |
+| POST | `/candidates/import/pdf` | Upload PDF → Gemini extrai → salva | RH |
+| POST | `/candidates/import/json` | Import em lote via JSON | RH |
+| POST | `/candidates/import/csv` | Import em lote via CSV | RH |
 | GET | `/candidates/import/template` | Baixar template CSV | RH |
 
 ---
@@ -132,65 +142,78 @@ POST /auth/login
 { "user_id": 1 }
 ```
 
-### 2. Criar vaga
+### 2. Criar e submeter vaga
 ```http
 POST /vacancies
 Authorization: Bearer <token>
 
 {
-  "title": "Analista de QA Sênior",
-  "description": "Responsável pela estratégia de testes.",
+  "title": "Dev Backend Sênior",
+  "description": "Squad de pagamentos.",
   "location": "São Paulo, SP",
   "priority": "HIGH",
   "requirements": [
-    { "type": "SKILL", "name": "Selenium", "weight": 3.0, "mandatory": true },
+    { "type": "SKILL", "name": "Python", "weight": 3.0, "mandatory": true },
     { "type": "LANGUAGE", "name": "Inglês", "weight": 1.0, "mandatory": false }
   ]
 }
-```
 
-### 3. Submeter para aprovação
-```http
 POST /vacancies/{id}/submit
-Authorization: Bearer <token_requester>
 ```
 
-### 4. Login como RH e aprovar
+### 3. Login como RH, importar currículo PDF e aprovar vaga
 ```http
 POST /auth/login
 { "user_id": 2 }
 
+POST /candidates/import/pdf
+Authorization: Bearer <token_rh>
+Content-Type: multipart/form-data
+file: curriculo.pdf
+```
+> O Gemini extrai automaticamente todos os dados do currículo.
+
+```http
 POST /approvals/{id}/approve
 Authorization: Bearer <token_rh>
-{ "justification": "Perfil estratégico." }
+{ "justification": "Perfil aprovado." }
 ```
+> Ao aprovar, o sistema calcula o score de **todos os candidatos** contra os requisitos da vaga.
 
-> Ao aprovar, o sistema calcula automaticamente o score de **todos os candidatos** da base contra os requisitos da vaga e salva no banco.
-
-### 5. Ver candidatos rankeados
+### 4. Ver ranking
 ```http
 GET /vacancies/{id}/candidates
-Authorization: Bearer <token>
+GET /candidates?skill=python&location=São Paulo
 ```
 
-### 6. Importar candidatos (RH)
-```http
-POST /candidates/import/json
-Authorization: Bearer <token_rh>
+---
 
-[
-  {
-    "full_name": "João Silva",
-    "email": "joao@email.com",
-    "location": "São Paulo, SP",
-    "skills": [{ "name": "Python", "level": "Avançado", "years_experience": 5 }],
-    "languages": [{ "name": "Inglês", "level": "B2" }],
-    "certifications": [],
-    "educations": [],
-    "experiences": []
-  }
-]
+## Motor de Score
+
 ```
+score_base     = (peso_atendido / peso_total) × 100
+penalidade_req = qtd_obrigatórios_ausentes × 30%
+penalidade_loc = 10% se localização não bate
+score_final    = score_base × (1 - penalidade_req) × (1 - penalidade_loc)
+```
+
+Matching normalizado via dicionário de sinônimos antes da comparação.
+
+---
+
+## Dicionário de Sinônimos
+
+Localizado em `app/synonyms/dictionary.py`. Para adicionar:
+
+```python
+SYNONYMS = {
+    "js": "javascript",
+    "k8s": "kubernetes",
+    "sua-variacao": "termo-canonico",
+}
+```
+
+Aplicado automaticamente na ingestão (PDF, CSV, JSON) e no motor de score.
 
 ---
 
@@ -201,7 +224,7 @@ full_name,headline,email,location,linkedin_url,skills,languages,certifications,e
 João Silva,Dev Backend,joao@email.com,São Paulo SP,,Python:Avançado:5;FastAPI:Inter:2,Inglês:B2,AWS:Amazon:2023,USP:CC:Bach:2018,BBTS:Dev:2022:2024:false
 ```
 
-Campos compostos: `;` separa itens, `:` separa sub-campos.
+Campos compostos: `;` separa itens, `:` separa sub-campos internos.
 
 ---
 
@@ -226,25 +249,8 @@ Rodrigo Almeida · Fernanda Lima · Bruno Martins · Juliana Costa · Lucas Ferr
 
 ---
 
-## Motor de Score
-
-O score é calculado no momento da aprovação da vaga:
-
-- Cada requisito contribui proporcionalmente ao seu **peso**
-- Requisitos obrigatórios ausentes aplicam **penalidade de 30%** por item
-- Score final normalizado para **0–100**
-- Matching case-insensitive por substring
-
-```
-score_base = (peso_atendido / peso_total) × 100
-penalidade = qtd_obrigatórios_ausentes × 30%
-score_final = score_base × (1 - penalidade)
-```
-
----
-
 ## Próximas sprints
 
-- [ ] Sprint 3: Listagem/busca de candidatos com filtros, dashboard de KPIs por vaga
-- [ ] Sprint 4: Conectores externos (Gupy, Google Talent, EmpregaNet) via `ProfileConnector`
-- [ ] Sprint 5: SSO / autenticação real, RBAC com role MANAGER
+- [ ] Sprint 4: Role MANAGER, dashboard de KPIs por vaga
+- [ ] Sprint 5: Conectores externos (Gupy, EmpregaNet) via `ProfileConnector`
+- [ ] Sprint 6: SSO / autenticação real, busca semântica com pgvector
