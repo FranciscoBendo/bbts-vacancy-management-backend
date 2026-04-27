@@ -57,3 +57,28 @@ def import_from_csv(db: Session, content: bytes, filename: str = "upload.csv") -
     log = IntegrationLog(source="CSV", filename=filename, status=status, total_records=len(records), success_count=success, error_count=len(errors), errors_json=errors or None)
     db.add(log); db.commit(); db.refresh(log)
     return log
+
+def import_from_pdf_data(db: Session, extracted: dict, filename: str) -> tuple:
+    try:
+        candidate = _upsert(db, CandidateIn(**extracted))
+        log = IntegrationLog(
+            source="PDF", filename=filename,
+            status=IntegrationStatus.SUCCESS,
+            total_records=1, success_count=1, error_count=0,
+        )
+        db.add(log)
+        db.commit()
+        db.refresh(candidate)
+        db.refresh(log)
+        return candidate, log
+    except Exception as e:
+        db.rollback()
+        log = IntegrationLog(
+            source="PDF", filename=filename,
+            status=IntegrationStatus.FAILED,
+            total_records=1, success_count=0, error_count=1,
+            errors_json=[{"row": 1, "message": str(e)}],
+        )
+        db.add(log)
+        db.commit()
+        raise

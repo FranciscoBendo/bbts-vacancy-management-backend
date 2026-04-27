@@ -46,3 +46,14 @@ class CandidateDetailOut(BaseModel):
     educations: list[EducationOut] = []; languages: list[LanguageOut] = []
     certifications: list[CertificationOut] = []
     model_config = {"from_attributes": True}
+
+class CandidateListOut(BaseModel):
+    """Item na listagem geral de candidatos."""
+    id: int
+    full_name: str
+    headline: str
+    location: str
+    email: Optional[str]
+    skills_summary: list[str]
+    created_at: datetime
+    model_config = {"from_attributes": True}
