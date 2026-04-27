@@ -7,11 +7,15 @@ class CandidateExplanation(BaseModel):
     total_requirements: int
     missing_mandatory: list[str]
     strengths: list[str]
-    location_match: bool = True
 
 class CandidateOut(BaseModel):
-    id: int; vacancy_id: int; candidate_id: int
-    full_name: str; headline: str; location: str; score: float
+    id: int
+    vacancy_id: int
+    candidate_id: int
+    full_name: str
+    headline: str
+    location: str
+    score: float
     explanation: CandidateExplanation
     model_config = {"from_attributes": True}
 
@@ -36,14 +40,20 @@ class CertificationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 class CandidateDetailOut(BaseModel):
-    id: int; full_name: str; headline: str; email: Optional[str]
-    location: str; linkedin_url: Optional[str]; created_at: datetime
+    id: int; full_name: str; headline: str; email: Optional[str]; location: str
+    linkedin_url: Optional[str]; created_at: datetime
     skills: list[SkillOut] = []; experiences: list[ExperienceOut] = []
     educations: list[EducationOut] = []; languages: list[LanguageOut] = []
     certifications: list[CertificationOut] = []
     model_config = {"from_attributes": True}
 
 class CandidateListOut(BaseModel):
-    id: int; full_name: str; headline: str; location: str
-    email: Optional[str]; skills_summary: list[str]; created_at: datetime
+    """Item na listagem geral de candidatos."""
+    id: int
+    full_name: str
+    headline: str
+    location: str
+    email: Optional[str]
+    skills_summary: list[str]
+    created_at: datetime
     model_config = {"from_attributes": True}

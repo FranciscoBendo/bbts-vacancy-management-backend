@@ -5,20 +5,14 @@ from app.models import (
     CandidateLanguage, CandidateCertification, IntegrationLog, IntegrationStatus,
 )
 from app.imports.schemas import CandidateIn
-from app.synonyms.dictionary import normalize_skill
-
-def _normalize_data(data: CandidateIn) -> CandidateIn:
-    return data.model_copy(update={
-        "skills": [s.model_copy(update={"name": normalize_skill(s.name)}) for s in data.skills],
-        "languages": [l.model_copy(update={"name": normalize_skill(l.name)}) for l in data.languages],
-    })
 
 def _upsert(db: Session, data: CandidateIn) -> Candidate:
-    data = _normalize_data(data)
     c = db.query(Candidate).filter(Candidate.email == data.email).first() if data.email else None
     if c:
-        c.full_name = data.full_name; c.headline = data.headline
-        c.location = data.location; c.linkedin_url = data.linkedin_url
+        c.full_name = data.full_name
+        c.headline = data.headline
+        c.location = data.location
+        c.linkedin_url = data.linkedin_url
         for attr in ["skills","experiences","educations","languages","certifications"]:
             for item in getattr(c, attr): db.delete(item)
         db.flush()
@@ -32,29 +26,13 @@ def _upsert(db: Session, data: CandidateIn) -> Candidate:
     for cert in data.certifications: db.add(CandidateCertification(candidate_id=c.id, **cert.model_dump()))
     return c
 
-def import_from_pdf_data(db: Session, extracted: dict, filename: str) -> tuple:
-    try:
-        candidate = _upsert(db, CandidateIn(**extracted))
-        log = IntegrationLog(source="PDF", filename=filename, status=IntegrationStatus.SUCCESS,
-                             total_records=1, success_count=1, error_count=0)
-        db.add(log); db.commit(); db.refresh(candidate); db.refresh(log)
-        return candidate, log
-    except Exception as e:
-        db.rollback()
-        log = IntegrationLog(source="PDF", filename=filename, status=IntegrationStatus.FAILED,
-                             total_records=1, success_count=0, error_count=1,
-                             errors_json=[{"row": 1, "message": str(e)}])
-        db.add(log); db.commit()
-        raise
-
 def import_from_json(db: Session, records: list[dict], filename: str = "payload.json") -> IntegrationLog:
     errors, success = [], 0
     for i, record in enumerate(records):
         try: _upsert(db, CandidateIn(**record)); success += 1
         except Exception as e: errors.append({"row": i+1, "message": str(e)})
     status = IntegrationStatus.SUCCESS if not errors else IntegrationStatus.PARTIAL if success > 0 else IntegrationStatus.FAILED
-    log = IntegrationLog(source="JSON", filename=filename, status=status, total_records=len(records),
-                         success_count=success, error_count=len(errors), errors_json=errors or None)
+    log = IntegrationLog(source="JSON", filename=filename, status=status, total_records=len(records), success_count=success, error_count=len(errors), errors_json=errors or None)
     db.add(log); db.commit(); db.refresh(log)
     return log
 
@@ -63,7 +41,8 @@ def _split(raw: str) -> list[str]:
 
 def import_from_csv(db: Session, content: bytes, filename: str = "upload.csv") -> IntegrationLog:
     errors, success = [], 0
-    records = list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
+    reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
+    records = list(reader)
     for i, row in enumerate(records):
         try:
             skills = [{"name": p[0].strip(), "level": p[1].strip() if len(p)>1 else None, "years_experience": float(p[2]) if len(p)>2 and p[2].strip() else None} for p in [item.split(":") for item in _split(row.get("skills",""))]]
@@ -75,7 +54,31 @@ def import_from_csv(db: Session, content: bytes, filename: str = "upload.csv") -
             success += 1
         except Exception as e: errors.append({"row": i+1, "message": str(e)})
     status = IntegrationStatus.SUCCESS if not errors else IntegrationStatus.PARTIAL if success > 0 else IntegrationStatus.FAILED
-    log = IntegrationLog(source="CSV", filename=filename, status=status, total_records=len(records),
-                         success_count=success, error_count=len(errors), errors_json=errors or None)
+    log = IntegrationLog(source="CSV", filename=filename, status=status, total_records=len(records), success_count=success, error_count=len(errors), errors_json=errors or None)
     db.add(log); db.commit(); db.refresh(log)
     return log
+
+def import_from_pdf_data(db: Session, extracted: dict, filename: str) -> tuple:
+    try:
+        candidate = _upsert(db, CandidateIn(**extracted))
+        log = IntegrationLog(
+            source="PDF", filename=filename,
+            status=IntegrationStatus.SUCCESS,
+            total_records=1, success_count=1, error_count=0,
+        )
+        db.add(log)
+        db.commit()
+        db.refresh(candidate)
+        db.refresh(log)
+        return candidate, log
+    except Exception as e:
+        db.rollback()
+        log = IntegrationLog(
+            source="PDF", filename=filename,
+            status=IntegrationStatus.FAILED,
+            total_records=1, success_count=0, error_count=1,
+            errors_json=[{"row": 1, "message": str(e)}],
+        )
+        db.add(log)
+        db.commit()
+        raise
