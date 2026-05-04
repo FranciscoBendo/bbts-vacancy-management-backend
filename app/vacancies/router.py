@@ -6,6 +6,8 @@ from app.models import User
 from app.auth.service import get_current_user
 from app.vacancies import service
 from app.vacancies.schemas import VacancyCreate, VacancyUpdate, VacancyOut, VacancyList
+# vacancies/router.py — ADICIONAR o import junto aos demais imports do arquivo
+from app.approvals.service import rescore_vacancy
 
 router = APIRouter(prefix="/vacancies", tags=["Vacancies"])
 
@@ -57,3 +59,18 @@ def submit_vacancy(
     user: User = Depends(get_current_user),
 ):
     return service.submit_vacancy(db, vacancy_id, user)
+    
+# Adicionado rescore
+@router.post("/{vacancy_id}/rescore", tags=["Vacancies"])
+def rescore_vacancy_endpoint(
+    vacancy_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Recalcula o ranking de candidatos de uma vaga aprovada.
+    Pode ser chamado múltiplas vezes com segurança — cada chamada
+    apaga e recria todas as sugestões sem gerar duplicatas.
+    """
+    total = rescore_vacancy(vacancy_id, db)
+    return {"message": f"Rescore concluído. {total} candidato(s) processado(s)."}
