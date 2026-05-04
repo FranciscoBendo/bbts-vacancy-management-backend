@@ -10,7 +10,7 @@ from app.imports.schemas import IntegrationLogOut
 from app.candidates.schemas import CandidateDetailOut
 
 router = APIRouter(prefix="/candidates", tags=["Import (RH)"])
-
+ 
 
 @router.post("/import/pdf", response_model=CandidateDetailOut, status_code=201,
              summary="Importar candidato via PDF (Groq — LLaMA 3.3 70B)")

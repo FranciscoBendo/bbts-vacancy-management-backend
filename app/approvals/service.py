@@ -44,3 +44,48 @@ def reject_vacancy(db: Session, vacancy_id: int, rh_user_id: int, justification:
     _audit(db, rh_user_id, "VACANCY_REJECTED", vacancy_id, {"reason": justification})
     db.commit(); db.refresh(decision)
     return decision
+
+# approvals/service.py — ADICIONAR ao final do arquivo
+
+def rescore_vacancy(vacancy_id: int, db: Session) -> int:
+    """
+    Recalcula o ranking de candidatos de uma vaga já aprovada.
+    Apaga TODAS as sugestões antigas antes de recriar — evita duplicatas
+    como as visíveis na tela (mesmo candidato aparecendo múltiplas vezes).
+    Retorna o número de candidatos processados.
+    """
+    from app.scoring.engine import calculate_score
+    from app.models import Candidate, CandidateSuggestion
+
+    vacancy = db.query(Vacancy).filter(Vacancy.id == vacancy_id).first()
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vaga não encontrada")
+
+    if vacancy.status != VacancyStatus.APPROVED:
+        raise HTTPException(
+            status_code=400,
+            detail="Rescore só pode ser executado em vagas com status APPROVED"
+        )
+
+    # ── PASSO CRÍTICO: apaga sugestões antigas ANTES de recriar ───────────────
+    # Sem este delete, cada chamada ao rescore acumula novas linhas na tabela
+    # candidate_suggestions sem remover as anteriores — causando as duplicatas
+    # visíveis na tela (posições 3/7, 4/8, 5/9 com o mesmo candidato).
+    # ──────────────────────────────────────────────────────────────────────────
+    db.query(CandidateSuggestion).filter(
+        CandidateSuggestion.vacancy_id == vacancy_id
+    ).delete()
+    db.flush()
+
+    candidates = db.query(Candidate).all()
+    for candidate in candidates:
+        result = calculate_score(candidate, vacancy)
+        db.add(CandidateSuggestion(
+            vacancy_id=vacancy.id,
+            candidate_id=candidate.id,
+            score=result.score,
+            explanation_json=result.to_explanation_json(),
+        ))
+
+    db.commit()
+    return len(candidates)

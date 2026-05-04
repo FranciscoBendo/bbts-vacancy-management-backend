@@ -10,6 +10,11 @@ from app.models import (
 )
 
 
+
+from app.models import Candidate  # Importa o model Candidate para poder criar registros de candidatos
+
+
+
 def run():
     db = SessionLocal()
     try:
@@ -210,8 +215,39 @@ def run():
             },
         ]
 
+        #for c in candidates_data:
+         #   db.add(CandidateSuggestion(vacancy_id=v3.id, **c))
+
+
+
+        # Itera sobre a lista de dados de candidatos (cada item é um dicionário)
         for c in candidates_data:
-            db.add(CandidateSuggestion(vacancy_id=v3.id, **c))
+
+            # Cria uma nova instância de Candidate com dados básicos
+            candidate = Candidate(
+                full_name=c["full_name"],   # Nome completo do candidato
+                headline=c["headline"],     # Título/resumo profissional
+                location=c["location"],     # Localização do candidato
+            )
+            db.add(candidate) # Adiciona o candidato à sessão do SQLAlchemy (ainda não salva no banco)
+            db.flush()  # importante pra gerar candidate.id
+            # Executa um "flush" no banco:
+            # - envia o INSERT para o banco
+            # - NÃO faz commit ainda
+            # - garante que o candidate.id seja gerado (PK autoincrement)
+
+            # Cria a relação entre vaga e candidato (tabela de sugestões/ranking)
+            suggestion = CandidateSuggestion(
+                vacancy_id=v3.id,                 # ID da vaga (já existente)
+                candidate_id=candidate.id,        # ID do candidato recém-criado
+                score=c["score"],                 # Score calculado do candidato para a vaga
+                explanation_json=c["explanation_json"],  # Explicação detalhada do score
+            )
+            db.add(suggestion)
+            # Adiciona a sugestão à sessão (também será persistida no commit final)
+
+
+
 
         db.commit()
         print("✅  Seed concluído com sucesso!")
