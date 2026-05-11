@@ -9,19 +9,22 @@ from app.models import (
     RoleEnum, VacancyStatus, PriorityEnum, RequirementType, DecisionEnum,
 )
 
-
-
-from app.models import Candidate  # Importa o model Candidate para poder criar registros de candidatos
-
+from app.models import (
+    Candidate,
+    CandidateSkill,     # ADICIONADO — necessário para persistir skills no banco
+    CandidateLanguage,  # ADICIONADO — necessário para persistir idiomas no banco
+)
 
 
 def run():
     db = SessionLocal()
     try:
         # ── Idempotência: apaga seed anterior ──────────────────────────────────
+        # ADICIONADO Candidate à lista de limpeza — sem isso, rodar o seed duas
+        # vezes acumula candidatos duplicados no banco
         for model in [
             CandidateSuggestion, AuditEvent, ApprovalDecision,
-            Requirement, Vacancy, User,
+            Requirement, Vacancy, User, Candidate,
         ]:
             db.query(model).delete()
         db.commit()
@@ -148,11 +151,16 @@ def run():
         ))
 
         # ── Candidatos para Vaga 3 ─────────────────────────────────────────────
+        # ADICIONADO — campos 'skills' e 'languages' em cada candidato.
+        # Sem esses dados no banco, o engine.py recebe listas vazias e calcula
+        # score 0 para todos ao acionar o rescore.
         candidates_data = [
             {
                 "full_name": "Rodrigo Almeida",
                 "headline": "Tech Lead Java | 10 anos de experiência em sistemas de pagamento",
                 "location": "São Paulo, SP",
+                "skills": ["Java", "Spring Boot", "Kafka", "Kubernetes"],
+                "languages": ["Inglês"],
                 "score": 95.0,
                 "explanation_json": {
                     "met_requirements": 5,
@@ -170,6 +178,8 @@ def run():
                 "full_name": "Fernanda Lima",
                 "headline": "Engenheira Backend Sênior | Java, Kafka, arquitetura de microsserviços",
                 "location": "São Paulo, SP",
+                "skills": ["Java", "Spring Boot", "Kafka"],
+                "languages": [],
                 "score": 82.0,
                 "explanation_json": {
                     "met_requirements": 4,
@@ -186,6 +196,8 @@ def run():
                 "full_name": "Bruno Martins",
                 "headline": "Desenvolvedor Java Pleno | Spring Boot, AWS, microsserviços",
                 "location": "Campinas, SP",
+                "skills": ["Java", "Spring Boot"],
+                "languages": [],
                 "score": 61.0,
                 "explanation_json": {
                     "met_requirements": 3,
@@ -202,6 +214,8 @@ def run():
                 "full_name": "Juliana Costa",
                 "headline": "Backend Engineer | Python, Java, sistemas distribuídos",
                 "location": "Remoto (Recife, PE)",
+                "skills": ["Java"],
+                "languages": [],
                 "score": 44.0,
                 "explanation_json": {
                     "met_requirements": 2,
@@ -215,39 +229,42 @@ def run():
             },
         ]
 
-        #for c in candidates_data:
-         #   db.add(CandidateSuggestion(vacancy_id=v3.id, **c))
-
-
-
-        # Itera sobre a lista de dados de candidatos (cada item é um dicionário)
         for c in candidates_data:
 
-            # Cria uma nova instância de Candidate com dados básicos
+            # Cria o candidato com dados básicos
             candidate = Candidate(
-                full_name=c["full_name"],   # Nome completo do candidato
-                headline=c["headline"],     # Título/resumo profissional
-                location=c["location"],     # Localização do candidato
+                full_name=c["full_name"],
+                headline=c["headline"],
+                location=c["location"],
             )
-            db.add(candidate) # Adiciona o candidato à sessão do SQLAlchemy (ainda não salva no banco)
-            db.flush()  # importante pra gerar candidate.id
-            # Executa um "flush" no banco:
-            # - envia o INSERT para o banco
-            # - NÃO faz commit ainda
-            # - garante que o candidate.id seja gerado (PK autoincrement)
+            db.add(candidate)
+            db.flush()  # gera candidate.id antes de criar os relacionamentos
 
-            # Cria a relação entre vaga e candidato (tabela de sugestões/ranking)
-            suggestion = CandidateSuggestion(
-                vacancy_id=v3.id,                 # ID da vaga (já existente)
-                candidate_id=candidate.id,        # ID do candidato recém-criado
-                score=c["score"],                 # Score calculado do candidato para a vaga
-                explanation_json=c["explanation_json"],  # Explicação detalhada do score
-            )
-            db.add(suggestion)
-            # Adiciona a sugestão à sessão (também será persistida no commit final)
+            # ADICIONADO — persiste as skills no banco para que o engine.py
+            # consiga calcular o score corretamente ao acionar o rescore
+            for skill_name in c["skills"]:
+                db.add(CandidateSkill(
+                    candidate_id=candidate.id,
+                    name=skill_name,
+                    level=None,
+                    years_experience=None,
+                ))
 
+            # ADICIONADO — persiste os idiomas no banco pelo mesmo motivo
+            for lang_name in c["languages"]:
+                db.add(CandidateLanguage(
+                    candidate_id=candidate.id,
+                    name=lang_name,
+                    level=None,
+                ))
 
-
+            # Cria a sugestão inicial com o score hardcoded do seed
+            db.add(CandidateSuggestion(
+                vacancy_id=v3.id,
+                candidate_id=candidate.id,
+                score=c["score"],
+                explanation_json=c["explanation_json"],
+            ))
 
         db.commit()
         print("✅  Seed concluído com sucesso!")
