@@ -7,6 +7,7 @@ class CandidateExplanation(BaseModel):
     total_requirements: int
     missing_mandatory: list[str]
     strengths: list[str]
+    location_match: bool = True
 
 class CandidateOut(BaseModel):
     id: int
