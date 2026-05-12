@@ -1,8 +1,9 @@
 from datetime import datetime
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload 
 from app.models import Vacancy, Candidate, CandidateSuggestion, ApprovalDecision, AuditEvent, VacancyStatus, DecisionEnum
 from app.scoring.engine import calculate_score
+from app.models import Candidate, CandidateSuggestion
 
 def _audit(db, actor_id, action, vacancy_id, metadata=None):
     db.add(AuditEvent(actor_user_id=actor_id, action=action, entity_type="Vacancy", entity_id=vacancy_id, metadata_json=metadata or {}))
@@ -45,7 +46,7 @@ def reject_vacancy(db: Session, vacancy_id: int, rh_user_id: int, justification:
     db.commit(); db.refresh(decision)
     return decision
 
-# approvals/service.py — ADICIONAR ao final do arquivo
+# Função de Rescore
 
 def rescore_vacancy(vacancy_id: int, db: Session) -> int:
     """
@@ -54,30 +55,40 @@ def rescore_vacancy(vacancy_id: int, db: Session) -> int:
     como as visíveis na tela (mesmo candidato aparecendo múltiplas vezes).
     Retorna o número de candidatos processados.
     """
-    from app.scoring.engine import calculate_score
-    from app.models import Candidate, CandidateSuggestion
 
-    vacancy = db.query(Vacancy).filter(Vacancy.id == vacancy_id).first()
+    vacancy = (
+        db.query(Vacancy)
+        .options(joinedload(Vacancy.requirements))
+        .filter(Vacancy.id == vacancy_id)
+        .first()
+    )
+
     if not vacancy:
         raise HTTPException(status_code=404, detail="Vaga não encontrada")
 
     if vacancy.status != VacancyStatus.APPROVED:
-        raise HTTPException(
-            status_code=400,
-            detail="Rescore só pode ser executado em vagas com status APPROVED"
-        )
+        raise HTTPException(status_code=400, detail="Rescore só pode ser executado em vagas com status APPROVED")
 
-    # ── PASSO CRÍTICO: apaga sugestões antigas ANTES de recriar ───────────────
+
+    # PASSO CRÍTICO: apaga sugestões antigas ANTES de recriar
     # Sem este delete, cada chamada ao rescore acumula novas linhas na tabela
-    # candidate_suggestions sem remover as anteriores — causando as duplicatas
-    # visíveis na tela (posições 3/7, 4/8, 5/9 com o mesmo candidato).
-    # ──────────────────────────────────────────────────────────────────────────
     db.query(CandidateSuggestion).filter(
         CandidateSuggestion.vacancy_id == vacancy_id
     ).delete()
     db.flush()
 
-    candidates = db.query(Candidate).all()
+    candidates = (
+        db.query(Candidate)
+        .options(
+            joinedload(Candidate.skills),
+            joinedload(Candidate.languages),
+            joinedload(Candidate.certifications),
+            joinedload(Candidate.educations),
+            joinedload(Candidate.experiences),
+        )
+        .all()
+    )
+
     for candidate in candidates:
         result = calculate_score(candidate, vacancy)
         db.add(CandidateSuggestion(

@@ -28,6 +28,7 @@ class ScoreResult:
         }
 
 def calculate_score(candidate: Candidate, vacancy: Vacancy) -> ScoreResult:
+
     requirements = vacancy.requirements
     if not requirements:
         return ScoreResult(score=0.0, met_requirements=0, total_requirements=0)
