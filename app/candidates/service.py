@@ -8,11 +8,43 @@ from app.synonyms.dictionary import normalize_skill
 from app.imports.service import _upsert
 from app.imports.schemas import CandidateIn
 
-def get_candidates(db: Session, vacancy_id: int) -> list[CandidateOut]:
+SCORE_THRESHOLD = 30.0
+
+
+def get_candidates(db: Session, vacancy_id: int) -> tuple[list[CandidateOut], int]:
     if not db.query(Vacancy).filter(Vacancy.id == vacancy_id).first():
         raise HTTPException(status_code=404, detail="Vaga não encontrada")
-    suggestions = db.query(CandidateSuggestion).options(joinedload(CandidateSuggestion.candidate)).filter(CandidateSuggestion.vacancy_id == vacancy_id).order_by(CandidateSuggestion.score.desc()).all()
-    return [CandidateOut(id=s.id, vacancy_id=s.vacancy_id, candidate_id=s.candidate_id, full_name=s.candidate.full_name, headline=s.candidate.headline, location=s.candidate.location, score=s.score, explanation=CandidateExplanation(**s.explanation_json)) for s in suggestions]
+    total_before_filter = (
+        db.query(CandidateSuggestion)
+        .filter(CandidateSuggestion.vacancy_id == vacancy_id)
+        .count()
+    )
+
+    suggestions = (
+        db.query(CandidateSuggestion)
+        .options(joinedload(CandidateSuggestion.candidate))
+        .filter(CandidateSuggestion.vacancy_id == vacancy_id)
+        .filter(CandidateSuggestion.score >= SCORE_THRESHOLD)  # ← filtro de score mínimo
+        .order_by(CandidateSuggestion.score.desc())
+        .all()
+    )
+
+    candidates = [
+        CandidateOut(
+            id=s.id,
+            vacancy_id=s.vacancy_id,
+            candidate_id=s.candidate_id,
+            full_name=s.candidate.full_name,
+            headline=s.candidate.headline,
+            location=s.candidate.location,
+            score=s.score,
+            explanation=CandidateExplanation(**s.explanation_json),
+        )
+        for s in suggestions
+    ]
+
+
+    return candidates, total_before_filter
 
 def get_candidate_detail(db: Session, candidate_id: int) -> CandidateDetailOut:
     c = db.query(Candidate).options(joinedload(Candidate.skills), joinedload(Candidate.experiences), joinedload(Candidate.educations), joinedload(Candidate.languages), joinedload(Candidate.certifications)).filter(Candidate.id == candidate_id).first()
@@ -85,3 +117,22 @@ def import_from_pdf_data(db: Session, extracted: dict, filename: str) -> tuple:
         db.add(log)
         db.commit()
         raise
+
+def list_candidates_by_vacancy(db: Session, vacancy_id: int) -> tuple:
+   
+    total_before_filter = (
+        db.query(CandidateSuggestion)
+        .filter(CandidateSuggestion.vacancy_id == vacancy_id)
+        .count()
+    )
+
+    
+    candidates = (
+        db.query(CandidateSuggestion)
+        .filter(CandidateSuggestion.vacancy_id == vacancy_id)
+        .filter(CandidateSuggestion.score >= 30)
+        .order_by(CandidateSuggestion.score.desc())
+        .all()
+    )
+
+    return candidates, total_before_filter

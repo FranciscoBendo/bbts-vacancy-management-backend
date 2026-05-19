@@ -45,6 +45,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     email: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum), nullable=False)
     vacancies: Mapped[list["Vacancy"]] = relationship("Vacancy", back_populates="requester")
     decisions: Mapped[list["ApprovalDecision"]] = relationship("ApprovalDecision", back_populates="rh_user")
@@ -130,8 +131,8 @@ class CandidateExperience(Base):
     __tablename__ = "candidate_experiences"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     candidate_id: Mapped[int] = mapped_column(ForeignKey("candidates.id"), nullable=False)
-    company: Mapped[str] = mapped_column(String(200), nullable=False)
-    role: Mapped[str] = mapped_column(String(200), nullable=False)
+    company: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    role: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     start_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     end_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     current: Mapped[bool] = mapped_column(Boolean, default=False)

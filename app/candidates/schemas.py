@@ -58,3 +58,12 @@ class CandidateListOut(BaseModel):
     skills_summary: list[str]
     created_at: datetime
     model_config = {"from_attributes": True}
+
+# ADICIONAR ao final do arquivo
+
+class CandidateListByVacancyOut(BaseModel):
+    """Resposta do ranking com metadado de filtro."""
+    candidates: list[CandidateOut]   
+    total_before_filter: int             # total antes do filtro de score mínimo
+    score_threshold: float = 30.0        # limiar aplicado
+    model_config = {"from_attributes": True}

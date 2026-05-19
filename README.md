@@ -66,7 +66,7 @@ app/
 ├── auth/
 ├── vacancies/
 ├── approvals/               # dispara scoring automático ao aprovar + rescore manual
-├── candidates/              # ranking + listagem com filtros + detalhe
+├── candidates/              # ranking com filtro de score mínimo + listagem + detalhe
 ├── imports/
 │   ├── pdf_extractor.py     # Groq (LLaMA 3.3 70B) + fallback por palavras-chave
 │   ├── service.py           # normalização de sinônimos em todas as ingestões
@@ -110,7 +110,7 @@ alembic/versions/
 ### Candidatos
 | Método | Rota | Descrição | Role |
 |--------|------|-----------|------|
-| GET | `/vacancies/:id/candidates` | Ranking por vaga (score desc) | Todos |
+| GET | `/vacancies/:id/candidates` | Ranking por vaga filtrado por score mínimo (score desc) | Todos |
 | GET | `/candidates` | Listar com filtros (skill, location) | Todos |
 | GET | `/candidates/:id` | Perfil completo | Todos |
 
@@ -151,6 +151,20 @@ score_final    = score_base × (1 - penalidade_req) × (1 - penalidade_loc)
 
 O score é calculado automaticamente quando uma vaga é aprovada. Para recalcular o ranking após a inclusão de novos candidatos, utilize o endpoint `POST /vacancies/:id/rescore`. Ele apaga todas as sugestões existentes da vaga e recalcula o score para cada candidato cadastrado no banco, garantindo que não haja duplicatas no ranking.
 
+### Filtro de score mínimo
+
+O endpoint `GET /vacancies/:id/candidates` retorna apenas candidatos com score maior ou igual a **30%**. Candidatos abaixo desse limiar são considerados pouco relevantes para a vaga e não são incluídos na resposta.
+
+A resposta inclui três campos:
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `candidates` | `list` | Lista de candidatos filtrados, ordenada por score desc |
+| `total_before_filter` | `int` | Total de candidatos da vaga antes da filtragem |
+| `score_threshold` | `float` | Limiar aplicado (padrão: `30.0`) |
+
+O campo `total_before_filter` permite distinguir dois casos no frontend: vaga sem candidatos cadastrados vs. candidatos existentes mas nenhum alcançando o score mínimo. O limiar é definido pela constante `SCORE_THRESHOLD` em `app/candidates/service.py`.
+
 ---
 
 ## Variáveis de ambiente
@@ -174,7 +188,7 @@ O score é calculado automaticamente quando uma vaga é aprovada. Para recalcula
 |----|------|--------|
 | 1 | Dev Frontend Sênior | DRAFT |
 | 2 | Engenheiro de Dados Pleno | PENDING_APPROVAL |
-| 3 | Tech Lead Backend (Java/Spring) | APPROVED + scores calculados |
+| 3 | Tech Lead Backend (Java/Spring) | APPROVED + scores calculados pelo engine|
 
 ---
 

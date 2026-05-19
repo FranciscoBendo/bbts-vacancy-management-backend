@@ -1,14 +1,15 @@
-"""
-auth/schemas.py  ·  auth/service.py  ·  auth/router.py  (single file for brevity)
-"""
-# ── schemas ───────────────────────────────────────────────────────────────────
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from app.models import RoleEnum
 
+class RegisterRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: RoleEnum
 
 class LoginRequest(BaseModel):
-    user_id: int
-
+    email: EmailStr
+    password: str
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -17,11 +18,9 @@ class TokenResponse(BaseModel):
     name: str
     role: RoleEnum
 
-
 class UserOut(BaseModel):
     id: int
     name: str
     email: str
     role: RoleEnum
-
     model_config = {"from_attributes": True}
