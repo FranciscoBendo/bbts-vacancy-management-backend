@@ -58,10 +58,8 @@ def list_candidates(
     location: Optional[str] = None,
 ) -> list:
     q = db.query(Candidate).options(joinedload(Candidate.skills))
-
     if location:
         q = q.filter(Candidate.location.ilike(f"%{location}%"))
-
     if skill:
         normalized = normalize_skill(skill)
         q = q.filter(
@@ -72,7 +70,6 @@ def list_candidates(
                 )
             )
         )
-
     result = []
     for c in q.order_by(Candidate.created_at.desc()).all():
         result.append({
@@ -85,6 +82,7 @@ def list_candidates(
             "created_at": c.created_at,
         })
     return result
+
 
 def import_from_pdf_data(db: Session, extracted: dict, filename: str) -> tuple:
     """Recebe dados extraídos pelo Groq, normaliza, persiste e gera log."""

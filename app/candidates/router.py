@@ -7,6 +7,14 @@ from app.auth.service import get_current_user
 from app.candidates import service
 from app.candidates.schemas import CandidateOut, CandidateDetailOut, CandidateListOut, CandidateListByVacancyOut
 
+# ── MODIFICAÇÃO 1 ──────────────────────────────────────────────────────────────
+# Adicionado import de CandidateListByVacancyOut — novo schema que encapsula
+# a lista de candidatos filtrada junto com os metadados de filtragem
+# (total_before_filter e score_threshold), necessários para o frontend
+# distinguir "vaga sem candidatos" de "nenhum candidato alcança o mínimo".
+# ──────────────────────────────────────────────────────────────────────────────
+from app.candidates.schemas import CandidateListByVacancyOut
+
 router = APIRouter(tags=["Candidates"])
 
 
