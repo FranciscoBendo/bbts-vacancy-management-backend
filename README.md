@@ -15,15 +15,12 @@ Stack: **FastAPI · PostgreSQL · SQLAlchemy · Alembic · Docker · Groq (LLaMA
 ## Instalação e execução
 
 ```bash
-# 1. Clone o repositório
 git clone https://github.com/cauagomesdev/bbts-vacancy-management-backend.git
 cd bbts-vacancy-management-backend
 
-# 2. Configure as variáveis de ambiente
 cp .env.example .env
 # Edite .env e preencha GROQ_API_KEY=sua-chave-aqui
 
-# 3. Suba tudo
 docker compose up --build
 ```
 
@@ -53,6 +50,19 @@ docker compose exec api alembic upgrade head
 docker compose exec api python seed.py
 ```
 
+Após rodar o seed, sincronize a sequence do banco para evitar conflito de IDs ao cadastrar novos usuários:
+
+```bash
+docker compose exec db psql -U bbts -d bbts -c "SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));"
+```
+
+Usuários criados pelo seed:
+
+| E-mail | Senha | Role |
+|--------|-------|------|
+| ana@bbts.com | 123456 | REQUESTER |
+| carlos@bbts.com | 123456 | RH |
+
 ---
 
 ## Estrutura de pastas
@@ -62,8 +72,11 @@ app/
 ├── main.py
 ├── config.py                # inclui GROQ_API_KEY
 ├── database.py
-├── models.py
+├── models.py                # User com password_hash
 ├── auth/
+│   ├── router.py            # POST /auth/register · POST /auth/login · GET /auth/me
+│   ├── service.py           # bcrypt hash/verify · JWT · guards
+│   └── schemas.py           # RegisterRequest · LoginRequest · TokenResponse
 ├── vacancies/
 ├── approvals/               # dispara scoring automático ao aprovar + rescore manual
 ├── candidates/              # ranking com filtro de score mínimo + listagem + detalhe
@@ -77,7 +90,8 @@ app/
 alembic/versions/
 ├── 001_initial.py
 ├── 002_sprint2.py
-└── 003_sprint3.py
+├── 003_sprint3.py
+└── 004_add_password.py      # adiciona password_hash à tabela users
 ```
 
 ---
@@ -87,32 +101,33 @@ alembic/versions/
 ### Auth
 | Método | Rota | Descrição | Role |
 |--------|------|-----------|------|
-| POST | `/auth/login` | Login com `{ "user_id": 1\|2 }` | Todos |
-| GET | `/auth/me` | Usuário autenticado | Todos |
+| POST | `/auth/register` | Cadastrar novo usuário (nome, email, senha, role) | Público |
+| POST | `/auth/login` | Login com email e senha | Público |
+| GET | `/auth/me` | Dados do usuário autenticado | Autenticado |
 
 ### Vagas
 | Método | Rota | Descrição | Role |
 |--------|------|-----------|------|
 | GET | `/vacancies` | Listar | REQUESTER (só suas) / RH (todas) |
-| POST | `/vacancies` | Criar + requisitos | Todos |
-| GET | `/vacancies/:id` | Detalhe | Todos |
-| PATCH | `/vacancies/:id` | Editar (só DRAFT) | Todos |
+| POST | `/vacancies` | Criar + requisitos | Autenticado |
+| GET | `/vacancies/:id` | Detalhe | Autenticado |
+| PATCH | `/vacancies/:id` | Editar (só DRAFT) | Autenticado |
 | POST | `/vacancies/:id/submit` | Submeter para aprovação | REQUESTER |
-| POST | `/vacancies/:id/rescore` | Recalcular ranking de candidatos | Todos autenticados |
+| POST | `/vacancies/:id/rescore` | Recalcular ranking de candidatos | Autenticado |
 
 ### Aprovações
 | Método | Rota | Descrição | Role |
 |--------|------|-----------|------|
 | GET | `/approvals/pending` | Fila de pendentes | RH |
-| POST | `/approvals/:id/approve` | Aprovar + calcular scores | RH |
+| POST | `/approvals/:id/approve` | Aprovar + calcular scores automaticamente | RH |
 | POST | `/approvals/:id/reject` | Recusar (justificativa obrigatória) | RH |
 
 ### Candidatos
 | Método | Rota | Descrição | Role |
 |--------|------|-----------|------|
-| GET | `/vacancies/:id/candidates` | Ranking por vaga filtrado por score mínimo (score desc) | Todos |
-| GET | `/candidates` | Listar com filtros (skill, location) | Todos |
-| GET | `/candidates/:id` | Perfil completo | Todos |
+| GET | `/vacancies/:id/candidates` | Ranking filtrado por score mínimo (score desc) | Autenticado |
+| GET | `/candidates` | Listar com filtros (skill, location) | Autenticado |
+| GET | `/candidates/:id` | Perfil completo | Autenticado |
 
 ### Importação
 | Método | Rota | Descrição | Role |
@@ -121,6 +136,43 @@ alembic/versions/
 | POST | `/candidates/import/json` | Import em lote JSON | RH |
 | POST | `/candidates/import/csv` | Import em lote CSV | RH |
 | GET | `/candidates/import/template` | Template CSV | RH |
+
+---
+
+## Autenticação
+
+Todas as rotas (exceto `/auth/login` e `/auth/register`) exigem o header:
+
+```
+Authorization: Bearer <token>
+```
+
+O token é retornado no login e no cadastro.
+
+---
+
+## Motor de Score
+
+```
+score_base     = (peso_atendido / peso_total) × 100
+penalidade_req = qtd_obrigatórios_ausentes × 40%
+penalidade_loc = 10% se localização do candidato ≠ localização da vaga
+score_final    = score_base × (1 - penalidade_req) × (1 - penalidade_loc)
+```
+
+### Rescore manual
+
+O score é calculado automaticamente quando uma vaga é aprovada. Para recalcular o ranking após novos candidatos, use `POST /vacancies/:id/rescore`. Ele apaga as sugestões existentes e recalcula para todos os candidatos, sem duplicatas.
+
+### Filtro de score mínimo
+
+`GET /vacancies/:id/candidates` retorna apenas candidatos com score ≥ **40%**. A resposta inclui:
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `candidates` | `list` | Lista filtrada, ordenada por score desc |
+| `total_before_filter` | `int` | Total antes da filtragem |
+| `score_threshold` | `float` | Limiar aplicado (padrão: 40.0) |
 
 ---
 
@@ -134,36 +186,7 @@ PDF → pypdf extrai texto → Groq LLaMA 3.3 70B → JSON estruturado → norma
 
 O sistema nunca retorna erro por falha da IA — o fallback garante que pelo menos nome, email e skills básicas sejam extraídos.
 
-> **Nota:** campos `company` e `role` dentro de `experiences` são normalizados automaticamente — valores `null` retornados pelo modelo são convertidos para string vazia, evitando erro de validação 422.
-
----
-
-## Motor de Score
-
-```
-score_base     = (peso_atendido / peso_total) × 100
-penalidade_req = qtd_obrigatórios_ausentes × 30%
-penalidade_loc = 10% se localização do candidato ≠ localização da vaga
-score_final    = score_base × (1 - penalidade_req) × (1 - penalidade_loc)
-```
-
-### Rescore manual
-
-O score é calculado automaticamente quando uma vaga é aprovada. Para recalcular o ranking após a inclusão de novos candidatos, utilize o endpoint `POST /vacancies/:id/rescore`. Ele apaga todas as sugestões existentes da vaga e recalcula o score para cada candidato cadastrado no banco, garantindo que não haja duplicatas no ranking.
-
-### Filtro de score mínimo
-
-O endpoint `GET /vacancies/:id/candidates` retorna apenas candidatos com score maior ou igual a **30%**. Candidatos abaixo desse limiar são considerados pouco relevantes para a vaga e não são incluídos na resposta.
-
-A resposta inclui três campos:
-
-| Campo | Tipo | Descrição |
-|---|---|---|
-| `candidates` | `list` | Lista de candidatos filtrados, ordenada por score desc |
-| `total_before_filter` | `int` | Total de candidatos da vaga antes da filtragem |
-| `score_threshold` | `float` | Limiar aplicado (padrão: `30.0`) |
-
-O campo `total_before_filter` permite distinguir dois casos no frontend: vaga sem candidatos cadastrados vs. candidatos existentes mas nenhum alcançando o score mínimo. O limiar é definido pela constante `SCORE_THRESHOLD` em `app/candidates/service.py`.
+> **Nota:** campos `company` e `role` dentro de `experiences` são normalizados automaticamente — valores `null` são convertidos para string vazia, evitando erro 422.
 
 ---
 
@@ -177,23 +200,8 @@ O campo `total_before_filter` permite distinguir dois casos no frontend: vaga se
 
 ---
 
-## Seed
-
-| id | Usuário | Role |
-|----|---------|------|
-| 1 | Ana Souza | REQUESTER |
-| 2 | Carlos RH | RH |
-
-| id | Vaga | Status |
-|----|------|--------|
-| 1 | Dev Frontend Sênior | DRAFT |
-| 2 | Engenheiro de Dados Pleno | PENDING_APPROVAL |
-| 3 | Tech Lead Backend (Java/Spring) | APPROVED + scores calculados pelo engine|
-
----
-
 ## Próximas sprints
 
-- [ ] Sprint 4: Dashboard de KPIs, role MANAGER
+- [ ] Sprint 4: Dashboard de KPIs por vaga, role MANAGER
 - [ ] Sprint 5: Ranking explicativo por IA, busca semântica
 - [ ] Sprint 6: Conectores externos (Gupy, EmpregaNet), SSO
