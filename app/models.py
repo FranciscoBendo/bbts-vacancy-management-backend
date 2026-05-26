@@ -40,6 +40,10 @@ class IntegrationStatus(str, enum.Enum):
     PARTIAL = "PARTIAL"
     FAILED = "FAILED"
 
+class SuggestionStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    REJECTED = "REJECTED"
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -172,6 +176,11 @@ class CandidateSuggestion(Base):
     candidate_id: Mapped[int] = mapped_column(ForeignKey("candidates.id"), nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
     explanation_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    # Sprint 4 — status de recusa
+    status: Mapped[SuggestionStatus] = mapped_column(Enum(SuggestionStatus), default=SuggestionStatus.ACTIVE, nullable=False)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    rejected_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
     vacancy: Mapped["Vacancy"] = relationship("Vacancy", back_populates="suggestions")
     candidate: Mapped["Candidate"] = relationship("Candidate", back_populates="suggestions")
 

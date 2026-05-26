@@ -18,7 +18,13 @@ class CandidateOut(BaseModel):
     location: str
     score: float
     explanation: CandidateExplanation
+    status: str = "ACTIVE"
+    rejection_reason: Optional[str] = None
+    rejected_at: Optional[datetime] = None
     model_config = {"from_attributes": True}
+
+class RejectCandidateRequest(BaseModel):
+    reason: str
 
 class SkillOut(BaseModel):
     id: int; name: str; level: Optional[str]; years_experience: Optional[float]
@@ -49,21 +55,13 @@ class CandidateDetailOut(BaseModel):
     model_config = {"from_attributes": True}
 
 class CandidateListOut(BaseModel):
-    """Item na listagem geral de candidatos."""
-    id: int
-    full_name: str
-    headline: str
-    location: str
-    email: Optional[str]
-    skills_summary: list[str]
-    created_at: datetime
+    id: int; full_name: str; headline: str; location: str
+    email: Optional[str]; skills_summary: list[str]; created_at: datetime
     model_config = {"from_attributes": True}
 
-# ADICIONAR ao final do arquivo
-
 class CandidateListByVacancyOut(BaseModel):
-    """Resposta do ranking com metadado de filtro."""
-    candidates: list[CandidateOut]   
-    total_before_filter: int             # total antes do filtro de score mínimo
-    score_threshold: float = 30.0        # limiar aplicado
+    candidates: list[CandidateOut]
+    rejected: list[CandidateOut]
+    total_before_filter: int
+    score_threshold: float = 40.0
     model_config = {"from_attributes": True}
