@@ -1,10 +1,3 @@
-Com o maior prazer! Aqui está o **README definitivo**.
-
-Eu juntei a estrutura atualizada da nova versão com as seções vitais (Autenticação, Rodar Localmente e Fluxo da IA) que haviam sido apagadas na versão antiga.
-
-É só copiar o bloco inteiro abaixo e colar no seu arquivo `README.md`:
-
-```markdown
 # BBTS — Gestão de Vagas · Backend
 
 API REST com IA para extração de currículos, normalização por sinônimos e ranking explicável de candidatos.  
@@ -213,7 +206,3 @@ O sistema nunca retorna erro por falha da IA — o fallback garante que pelo men
 * [ ] Sprint 5: Dashboard de KPIs por vaga, role MANAGER
 * [ ] Sprint 6: Ranking explicativo por IA, busca semântica
 * [ ] Sprint 7: Conectores externos (Gupy, EmpregaNet), SSO
-
-```
-
-```
