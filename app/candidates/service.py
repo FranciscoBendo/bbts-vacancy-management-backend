@@ -55,10 +55,15 @@ def get_candidates(db: Session, vacancy_id: int) -> tuple[list[CandidateOut], li
     rejected = []
 
     for s in all_suggestions:
+        out = _to_candidate_out(s)
         if s.status == SuggestionStatus.REJECTED:
-            rejected.append(_to_candidate_out(s))
+            rejected.append(out)
         elif s.score >= SCORE_THRESHOLD:
-            active.append(_to_candidate_out(s))
+            active.append(out)
+        else:
+        # Abaixo do threshold mas ainda ACTIVE — inclui nos recusados com justificativa padrão
+            out.rejection_reason = f"Score abaixo do mínimo de {SCORE_THRESHOLD:.0f}% (score obtido: {s.score:.1f}%)"
+            rejected.append(out)
         # abaixo do threshold e ACTIVE são omitidos do ranking mas contados
 
     return active, rejected, total_before_filter
