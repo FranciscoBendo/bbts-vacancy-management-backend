@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.database import get_db
-from app.models import User
+from app.models import User, Vacancy, CandidateSuggestion, Candidate, SuggestionStatus
 from app.auth.service import get_current_user
 from app.vacancies import service
 from app.vacancies.schemas import VacancyCreate, VacancyUpdate, VacancyOut, VacancyList
-# vacancies/router.py — ADICIONAR o import junto aos demais imports do arquivo
 from app.approvals.service import rescore_vacancy
 
 router = APIRouter(prefix="/vacancies", tags=["Vacancies"])
@@ -31,6 +31,41 @@ def create_vacancy(
     user: User = Depends(get_current_user),
 ):
     return service.create_vacancy(db, body, user.id)
+
+
+@router.get("/dashboard", tags=["Dashboard"], summary="Indicadores gerais do sistema")
+def get_dashboard(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    total_vacancies = db.query(Vacancy).count()
+    by_status = db.query(Vacancy.status, func.count()).group_by(Vacancy.status).all()
+    status_map = {s.value: c for s, c in by_status}
+
+    total_candidates = db.query(Candidate).count()
+    total_suggestions = db.query(CandidateSuggestion).count()
+
+    avg_score = db.query(func.avg(CandidateSuggestion.score)).filter(
+        CandidateSuggestion.status == SuggestionStatus.ACTIVE
+    ).scalar()
+
+    total_rejected = db.query(CandidateSuggestion).filter(
+        CandidateSuggestion.status == SuggestionStatus.REJECTED
+    ).count()
+
+    return {
+        "total_vacancies": total_vacancies,
+        "vacancies_by_status": {
+            "draft": status_map.get("DRAFT", 0),
+            "pending_approval": status_map.get("PENDING_APPROVAL", 0),
+            "approved": status_map.get("APPROVED", 0),
+            "rejected": status_map.get("REJECTED", 0),
+        },
+        "total_candidates": total_candidates,
+        "total_suggestions": total_suggestions,
+        "average_score": round(float(avg_score), 1) if avg_score else 0.0,
+        "total_rejected_candidates": total_rejected,
+    }
 
 
 @router.get("/{vacancy_id}", response_model=VacancyOut, summary="Detalhe da vaga")
@@ -60,7 +95,7 @@ def submit_vacancy(
 ):
     return service.submit_vacancy(db, vacancy_id, user)
     
-# Adicionado rescore
+
 @router.post("/{vacancy_id}/rescore", tags=["Vacancies"])
 def rescore_vacancy_endpoint(
     vacancy_id: int,
