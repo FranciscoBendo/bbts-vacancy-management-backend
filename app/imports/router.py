@@ -6,14 +6,20 @@ from app.models import User, Candidate
 from app.auth.service import require_rh
 from app.imports import service
 from app.imports.pdf_extractor import extract_from_pdf
-from app.imports.schemas import IntegrationLogOut
 from app.candidates.schemas import CandidateDetailOut
+from app.imports.schemas import IntegrationLogOut, DuplicateDetectedOut, ResolveDuplicateIn
+from typing import Union
+
 
 router = APIRouter(prefix="/candidates", tags=["Import (RH)"])
- 
 
-@router.post("/import/pdf", response_model=CandidateDetailOut, status_code=201,
-             summary="Importar candidato via PDF (Groq — LLaMA 3.3 70B)")
+
+@router.post(
+    "/import/pdf",
+    response_model=Union[CandidateDetailOut, DuplicateDetectedOut],
+    status_code=201,
+    summary="Importar candidato via PDF (Groq — LLaMA 3.3 70B)",
+)
 async def import_pdf(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -31,7 +37,7 @@ async def import_pdf(
 
     Se a IA estiver indisponível, extrai skills por palavras-chave automaticamente.
     Sinônimos são normalizados (ex: "JS" → "javascript").
-    Se o candidato já existir pelo e-mail, seus dados são **atualizados**.
+    Se o candidato já existir pelo e-mail, retorna alerta de duplicata para o RH decidir.
     """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Arquivo deve ser .pdf")
@@ -43,9 +49,68 @@ async def import_pdf(
     extracted = await extract_from_pdf(content, filename=file.filename)
 
     try:
-        candidate, _ = service.import_from_pdf_data(db, extracted, filename=file.filename)
+        result = service.import_from_pdf_data(db, extracted, filename=file.filename)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Falha ao salvar candidato: {str(e)}")
+
+    # Duplicata detectada — retorna o dict diretamente sem tentar desempacotar como tupla
+    if isinstance(result, dict) and result.get("duplicate_detected"):
+        return result
+
+    # Fluxo normal — desempacota a tupla e retorna o perfil completo do candidato
+    candidate, _ = result
+    c = db.query(Candidate).options(
+        joinedload(Candidate.skills),
+        joinedload(Candidate.experiences),
+        joinedload(Candidate.educations),
+        joinedload(Candidate.languages),
+        joinedload(Candidate.certifications),
+    ).filter(Candidate.id == candidate.id).first()
+    return CandidateDetailOut.model_validate(c)
+
+
+@router.post(
+    "/import/pdf/resolve",
+    response_model=Union[CandidateDetailOut, dict],
+    status_code=201,
+    summary="Resolver duplicata após alerta ao RH",
+)
+def resolve_duplicate(
+    body: ResolveDuplicateIn,
+    db: Session = Depends(get_db),
+    rh: User = Depends(require_rh),
+):
+    """
+    Recebe a decisão do RH após detecção de duplicata:
+    - action='cancel'     → não persiste nada
+    - action='create_new' → cria novo candidato (remove e-mail para evitar
+                            conflito de constraint UNIQUE)
+    - action='update'     → atualiza o candidato existente pelo id
+    """
+    if body.action == "cancel":
+        return {"message": "Importação cancelada pelo usuário."}
+
+    if body.action == "create_new":
+        extracted = dict(body.extracted_data)
+        extracted["email"] = None  # evita violação de UNIQUE no banco
+        candidate, _ = service._import_and_log(db, extracted, body.filename)
+
+    elif body.action == "update":
+        if not body.existing_candidate_id:
+            raise HTTPException(
+                status_code=400,
+                detail="existing_candidate_id obrigatório para action='update'",
+            )
+        candidate, _ = service._import_and_log(
+            db, body.extracted_data, body.filename,
+            existing_id=body.existing_candidate_id,
+        )
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Ação inválida. Use: create_new, update ou cancel",
+        )
 
     c = db.query(Candidate).options(
         joinedload(Candidate.skills),

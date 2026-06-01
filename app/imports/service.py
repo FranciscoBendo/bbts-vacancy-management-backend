@@ -5,9 +5,13 @@ from app.models import (
     CandidateLanguage, CandidateCertification, IntegrationLog, IntegrationStatus,
 )
 from app.imports.schemas import CandidateIn
+from typing import Optional  
 
-def _upsert(db: Session, data: CandidateIn) -> Candidate:
-    c = db.query(Candidate).filter(Candidate.email == data.email).first() if data.email else None
+def _upsert(db: Session, data: CandidateIn, existing_id: Optional[int] = None) -> Candidate:
+    if existing_id:
+        c = db.query(Candidate).filter(Candidate.id == existing_id).first()
+    else:
+        c = db.query(Candidate).filter(Candidate.email == data.email).first() if data.email else None
     if c:
         c.full_name = data.full_name
         c.headline = data.headline
@@ -58,9 +62,61 @@ def import_from_csv(db: Session, content: bytes, filename: str = "upload.csv") -
     db.add(log); db.commit(); db.refresh(log)
     return log
 
-def import_from_pdf_data(db: Session, extracted: dict, filename: str) -> tuple:
+def import_from_pdf_data(db: Session, extracted: dict, filename: str):
+    """
+    Verifica duplicata antes de persistir.
+    - Sem duplicata: persiste e retorna tupla (candidate, log) — comportamento anterior
+    - Com duplicata: retorna dict com duplicate_detected=True sem escrever nada no banco
+    """
+    email = extracted.get("email")
+    existing = check_duplicate_by_email(db, email)
+
+    if existing:
+        return {
+            "duplicate_detected": True,
+            "existing_candidate_id": existing.id,
+            "existing_candidate_name": existing.full_name,
+            "extracted_data": extracted,
+            "filename": filename,
+        }
+
+    return _import_and_log(db, extracted, filename)
+
+def _to_snake(data: dict) -> dict:
+    """
+    Converte recursivamente todas as chaves de um dict de camelCase para snake_case.
+    Necessário porque o frontend armazena extracted_data já convertido para camelCase
+    pelo http.ts e o reenvia no body de /pdf/resolve — o Pydantic espera snake_case.
+    """
+    import re
+
+    def snake(key: str) -> str:
+        return re.sub(r'(?<!^)(?=[A-Z])', '_', key).lower()
+
+    if isinstance(data, dict):
+        return {snake(k): _to_snake(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_to_snake(i) for i in data]
+    return data
+
+def _import_and_log(
+    db: Session,
+    extracted: dict,
+    filename: str,
+    existing_id: Optional[int] = None,
+) -> tuple:
+    """
+    Persiste o candidato e gera o log de integração.
+    Extraído de import_from_pdf_data para ser reutilizado pelo endpoint
+    /pdf/resolve após a decisão do RH.
+    existing_id: quando fornecido, atualiza o candidato existente pelo id.
+    """
     try:
-        candidate = _upsert(db, CandidateIn(**extracted))
+        # ADICIONAR — converte camelCase → snake_case antes de instanciar CandidateIn
+        # Sem isso, chaves como 'fullName', 'linkedinUrl' etc. causam ValidationError
+        normalized = _to_snake(extracted)
+        candidate_in = CandidateIn(**normalized)   # era: CandidateIn(**extracted)
+        candidate = _upsert(db, candidate_in, existing_id=existing_id)
         log = IntegrationLog(
             source="PDF", filename=filename,
             status=IntegrationStatus.SUCCESS,
@@ -82,3 +138,12 @@ def import_from_pdf_data(db: Session, extracted: dict, filename: str) -> tuple:
         db.add(log)
         db.commit()
         raise
+
+def check_duplicate_by_email(db: Session, email: Optional[str]) -> Optional[Candidate]:
+    """
+    Retorna o candidato existente se o e-mail já estiver cadastrado.
+    Retorna None se o e-mail for null ou não houver correspondência.
+    """
+    if not email:
+        return None
+    return db.query(Candidate).filter(Candidate.email == email).first()
