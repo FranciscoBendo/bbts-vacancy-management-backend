@@ -15,12 +15,11 @@ Stack: **FastAPI · PostgreSQL · SQLAlchemy · Alembic · Docker · Groq (LLaMA
 ## Instalação e execução
 
 ```bash
-git clone [https://github.com/cauagomesdev/bbts-vacancy-management-backend.git](https://github.com/cauagomesdev/bbts-vacancy-management-backend.git)
+git clone https://github.com/cauagomesdev/bbts-vacancy-management-backend.git
 cd bbts-vacancy-management-backend
 cp .env.example .env
 # Edite .env e preencha GROQ_API_KEY=sua-chave-aqui
 docker compose up --build
-
 ```
 
 **API:** http://localhost:8000 | **Swagger:** http://localhost:8000/docs
@@ -37,7 +36,6 @@ cp .env.example .env
 alembic upgrade head
 python seed.py
 uvicorn app.main:app --reload --port 8000
-
 ```
 
 ---
@@ -48,7 +46,6 @@ uvicorn app.main:app --reload --port 8000
 docker compose exec api alembic upgrade head
 docker compose exec api python seed.py
 docker compose exec db psql -U bbts -d bbts -c "SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));"
-
 ```
 
 Usuários do seed: `ana@bbts.com / 123456` (REQUESTER) · `carlos@bbts.com / 123456` (RH)
@@ -66,7 +63,10 @@ app/
 ├── candidates/
 │   ├── service.py           # SCORE_THRESHOLD=40% · auto-rejeição · rejeição manual
 │   └── schemas.py           # CandidateListByVacancyOut com rejected separados
-├── imports/                 # PDF (Groq) + CSV + JSON
+├── imports/                 # PDF (Groq) + CSV + JSON · detecção de duplicatas por e-mail
+│   ├── schemas.py           # DuplicateDetectedOut · ResolveDuplicateIn
+│   ├── service.py           # check_duplicate_by_email · _import_and_log · _to_snake
+│   └── router.py            # /import/pdf com detecção · /import/pdf/resolve com 3 ações
 ├── scoring/engine.py        # peso + obrigatórios + penalidade localização
 ├── synonyms/dictionary.py
 └── connectors/base.py
@@ -76,7 +76,6 @@ alembic/versions/
 ├── 003_sprint3.py
 ├── 004_add_password.py
 └── 005_candidate_rejection.py
-
 ```
 
 ---
@@ -87,7 +86,6 @@ Todas as rotas (exceto `/auth/login` e `/auth/register`) exigem o header:
 
 ```text
 Authorization: Bearer <token>
-
 ```
 
 O token é retornado no login e no cadastro.
@@ -136,7 +134,8 @@ O token é retornado no login e no cadastro.
 
 | Método | Rota | Descrição | Role |
 | --- | --- | --- | --- |
-| POST | `/candidates/import/pdf` | PDF → Groq extrai → salva | RH |
+| POST | `/candidates/import/pdf` | PDF → Groq extrai → verifica duplicata → salva | RH |
+| POST | `/candidates/import/pdf/resolve` | Resolver duplicata após decisão do RH | RH |
 | POST | `/candidates/import/json` | Import em lote JSON | RH |
 | POST | `/candidates/import/csv` | Import em lote CSV | RH |
 | GET | `/candidates/import/template` | Template CSV | RH |
@@ -164,6 +163,22 @@ O RH pode recusar qualquer candidato ativo com justificativa obrigatória.
 
 ---
 
+## Importação de currículos via PDF e detecção de duplicatas
+
+O endpoint `POST /candidates/import/pdf` verifica se o e-mail extraído do currículo já está cadastrado no banco **antes de persistir qualquer dado**. Se uma duplicata for detectada, o endpoint retorna um objeto com `duplicate_detected: true` e os dados extraídos do PDF — nenhuma escrita é feita no banco neste momento.
+
+O frontend exibe um alerta ao RH com três opções, enviadas para `POST /candidates/import/pdf/resolve`:
+
+| `action` | Comportamento |
+| --- | --- |
+| `update` | Atualiza o candidato existente com os dados do novo PDF |
+| `create_new` | Cria um novo candidato removendo o e-mail para evitar conflito de constraint UNIQUE |
+| `cancel` | Não persiste nada — importação cancelada pelo usuário |
+
+> **Nota:** campos `company` e `role` dentro de `experiences` são normalizados automaticamente — valores `null` são convertidos para string vazia, evitando erro 422.
+
+---
+
 ## Motor de Score
 
 ```text
@@ -171,7 +186,6 @@ score_base     = (peso_atendido / peso_total) × 100
 penalidade_req = qtd_obrigatórios_ausentes × 30%
 penalidade_loc = 10% se localização do candidato ≠ localização da vaga
 score_final    = score_base × (1 - penalidade_req) × (1 - penalidade_loc)
-
 ```
 
 ---
@@ -179,15 +193,15 @@ score_final    = score_base × (1 - penalidade_req) × (1 - penalidade_loc)
 ## Fluxo de extração de PDF
 
 ```text
-PDF → pypdf extrai texto → Groq LLaMA 3.3 70B → JSON estruturado → normaliza sinônimos → banco
-                                 ↓ se falhar
-                    Fallback: extração por palavras-chave do texto
-
+PDF → pypdf extrai texto → Groq LLaMA 3.3 70B → JSON estruturado → normaliza sinônimos
+                                 ↓ se falhar                               ↓
+                    Fallback: extração por palavras-chave         verifica e-mail duplicado
+                                                                           ↓
+                                                          duplicata → retorna DuplicateDetectedOut
+                                                          sem duplicata → persiste e retorna CandidateDetailOut
 ```
 
 O sistema nunca retorna erro por falha da IA — o fallback garante que pelo menos nome, email e skills básicas sejam extraídos.
-
-> **Nota:** campos `company` e `role` dentro de `experiences` são normalizados automaticamente — valores `null` são convertidos para string vazia, evitando erro 422.
 
 ---
 
@@ -203,6 +217,6 @@ O sistema nunca retorna erro por falha da IA — o fallback garante que pelo men
 
 ## Próximas sprints
 
-* [ ] Sprint 5: Dashboard de KPIs por vaga, role MANAGER
-* [ ] Sprint 6: Ranking explicativo por IA, busca semântica
-* [ ] Sprint 7: Conectores externos (Gupy, EmpregaNet), SSO
+- [ ] Sprint 5: Dashboard de KPIs por vaga, role MANAGER
+- [ ] Sprint 6: Ranking explicativo por IA, busca semântica
+- [ ] Sprint 7: Conectores externos (Gupy, EmpregaNet), SSO
