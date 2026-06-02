@@ -15,11 +15,12 @@ Stack: **FastAPI · PostgreSQL · SQLAlchemy · Alembic · Docker · Groq (LLaMA
 ## Instalação e execução
 
 ```bash
-git clone https://github.com/cauagomesdev/bbts-vacancy-management-backend.git
+git clone [https://github.com/cauagomesdev/bbts-vacancy-management-backend.git](https://github.com/cauagomesdev/bbts-vacancy-management-backend.git)
 cd bbts-vacancy-management-backend
 cp .env.example .env
 # Edite .env e preencha GROQ_API_KEY=sua-chave-aqui
 docker compose up --build
+
 ```
 
 **API:** http://localhost:8000 | **Swagger:** http://localhost:8000/docs
@@ -36,6 +37,7 @@ cp .env.example .env
 alembic upgrade head
 python seed.py
 uvicorn app.main:app --reload --port 8000
+
 ```
 
 ---
@@ -46,6 +48,7 @@ uvicorn app.main:app --reload --port 8000
 docker compose exec api alembic upgrade head
 docker compose exec api python seed.py
 docker compose exec db psql -U bbts -d bbts -c "SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));"
+
 ```
 
 Usuários do seed: `ana@bbts.com / 123456` (REQUESTER) · `carlos@bbts.com / 123456` (RH)
@@ -59,6 +62,7 @@ app/
 ├── models.py                # User com password_hash · CandidateSuggestion com status de rejeição
 ├── auth/                    # register · login · JWT · bcrypt
 ├── vacancies/
+│   └── router.py            # CRUD vagas + submit + rescore + GET /dashboard
 ├── approvals/               # scoring automático ao aprovar + rescore manual
 ├── candidates/
 │   ├── service.py           # SCORE_THRESHOLD=40% · auto-rejeição · rejeição manual
@@ -76,6 +80,7 @@ alembic/versions/
 ├── 003_sprint3.py
 ├── 004_add_password.py
 └── 005_candidate_rejection.py
+
 ```
 
 ---
@@ -86,6 +91,7 @@ Todas as rotas (exceto `/auth/login` e `/auth/register`) exigem o header:
 
 ```text
 Authorization: Bearer <token>
+
 ```
 
 O token é retornado no login e no cadastro.
@@ -112,6 +118,7 @@ O token é retornado no login e no cadastro.
 | PATCH | `/vacancies/:id` | Editar (só DRAFT) | Autenticado |
 | POST | `/vacancies/:id/submit` | Submeter para aprovação | REQUESTER |
 | POST | `/vacancies/:id/rescore` | Recalcular ranking | Autenticado |
+| GET | `/vacancies/dashboard` | Indicadores gerais do sistema | Autenticado |
 
 ### Aprovações
 
@@ -139,6 +146,21 @@ O token é retornado no login e no cadastro.
 | POST | `/candidates/import/json` | Import em lote JSON | RH |
 | POST | `/candidates/import/csv` | Import em lote CSV | RH |
 | GET | `/candidates/import/template` | Template CSV | RH |
+
+---
+
+## Dashboard
+
+A rota `GET /vacancies/dashboard` retorna as métricas globais do sistema:
+
+| Campo | Descrição |
+| --- | --- |
+| `total_vacancies` | Total de vagas cadastradas |
+| `vacancies_by_status` | Contagem por status (draft, pending_approval, approved, rejected) |
+| `total_candidates` | Total de candidatos na base |
+| `total_suggestions` | Total de sugestões ativas no ranking |
+| `average_score` | Score médio dos candidatos ativos |
+| `total_rejected_candidates` | Total de candidatos recusados (automático + manual) |
 
 ---
 
@@ -186,6 +208,7 @@ score_base     = (peso_atendido / peso_total) × 100
 penalidade_req = qtd_obrigatórios_ausentes × 30%
 penalidade_loc = 10% se localização do candidato ≠ localização da vaga
 score_final    = score_base × (1 - penalidade_req) × (1 - penalidade_loc)
+
 ```
 
 ---
@@ -199,6 +222,7 @@ PDF → pypdf extrai texto → Groq LLaMA 3.3 70B → JSON estruturado → norma
                                                                            ↓
                                                           duplicata → retorna DuplicateDetectedOut
                                                           sem duplicata → persiste e retorna CandidateDetailOut
+
 ```
 
 O sistema nunca retorna erro por falha da IA — o fallback garante que pelo menos nome, email e skills básicas sejam extraídos.
@@ -217,6 +241,6 @@ O sistema nunca retorna erro por falha da IA — o fallback garante que pelo men
 
 ## Próximas sprints
 
-- [ ] Sprint 5: Dashboard de KPIs por vaga, role MANAGER
-- [ ] Sprint 6: Ranking explicativo por IA, busca semântica
-- [ ] Sprint 7: Conectores externos (Gupy, EmpregaNet), SSO
+* [ ] Sprint 5: Role MANAGER com visão de área
+* [ ] Sprint 6: Ranking explicativo por IA, busca semântica
+* [ ] Sprint 7: Conectores externos (Gupy, EmpregaNet), SSO
