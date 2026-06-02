@@ -87,3 +87,31 @@ class IntegrationLogOut(BaseModel):
     error_count: int
     errors_json: Optional[list] = None
     model_config = {"from_attributes": True}
+
+# ADICIONAR ao final do arquivo
+
+class DuplicateDetectedOut(BaseModel):
+    """
+    Retornado pelo endpoint POST /candidates/import/pdf quando um candidato
+    com o mesmo e-mail já existe no banco. O frontend usa este schema para
+    exibir o alerta de decisão ao RH com as três opções.
+    O campo extracted_data contém os dados extraídos do PDF — devolvidos ao
+    frontend para que sejam reenviados junto com a decisão, evitando
+    reprocessar o PDF.
+    """
+    duplicate_detected: bool = True
+    existing_candidate_id: int
+    existing_candidate_name: str
+    extracted_data: dict
+    filename: str
+
+
+class ResolveDuplicateIn(BaseModel):
+    """
+    Body enviado pelo frontend para POST /candidates/import/pdf/resolve
+    após o RH tomar a decisão sobre a duplicata.
+    """
+    action: str                           # "create_new" | "update" | "cancel"
+    extracted_data: dict                  # dados extraídos recebidos em DuplicateDetectedOut
+    filename: str                         # nome do arquivo original
+    existing_candidate_id: Optional[int] = None  # obrigatório quando action="update"
