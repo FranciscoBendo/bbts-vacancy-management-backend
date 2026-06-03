@@ -107,5 +107,5 @@ def rescore_vacancy_endpoint(
     Pode ser chamado múltiplas vezes com segurança — cada chamada
     apaga e recria todas as sugestões sem gerar duplicatas.
     """
-    total = rescore_vacancy(vacancy_id, db)
-    return {"message": f"Rescore concluído. {total} candidato(s) processado(s)."}
+    result = rescore_vacancy(db, vacancy_id, current_user.id)
+    return {"message": f"Rescore concluído. {result['candidates_scored']} candidato(s) processado(s)."}
