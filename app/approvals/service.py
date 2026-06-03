@@ -16,18 +16,39 @@ def list_pending(db: Session) -> list[Vacancy]:
     return db.query(Vacancy).filter(Vacancy.status == VacancyStatus.PENDING_APPROVAL).order_by(Vacancy.updated_at.asc()).all()
 
 def _score_all(db: Session, vacancy: Vacancy) -> int:
-    db.query(CandidateSuggestion).filter(CandidateSuggestion.vacancy_id == vacancy.id).delete()
+    # Preserva IDs de candidatos rejeitados manualmente pelo RH
+    manual_rejections = {
+        s.candidate_id: s.rejection_reason
+        for s in db.query(CandidateSuggestion).filter(
+            CandidateSuggestion.vacancy_id == vacancy.id,
+            CandidateSuggestion.status == SuggestionStatus.REJECTED,
+            CandidateSuggestion.rejected_by_id.isnot(None),  # só rejeições manuais
+        ).all()
+    }
+
+    db.query(CandidateSuggestion).filter(
+        CandidateSuggestion.vacancy_id == vacancy.id
+    ).delete()
     db.flush()
+
     candidates = db.query(Candidate).all()
     for c in candidates:
         result = calculate_score(c, vacancy)
-        # Auto-rejeita se score abaixo do threshold
-        if result.score < SCORE_THRESHOLD:
+
+        # Se foi rejeitado manualmente, mantém a rejeição
+        if c.id in manual_rejections:
+            status = SuggestionStatus.REJECTED
+            reason = manual_rejections[c.id]
+            rejected_at = datetime.utcnow()
+        elif result.score < SCORE_THRESHOLD:
             status = SuggestionStatus.REJECTED
             reason = f"Score abaixo do mínimo de {SCORE_THRESHOLD:.0f}% (score obtido: {result.score:.1f}%)"
+            rejected_at = datetime.utcnow()
         else:
             status = SuggestionStatus.ACTIVE
             reason = None
+            rejected_at = None
+
         db.add(CandidateSuggestion(
             vacancy_id=vacancy.id,
             candidate_id=c.id,
@@ -35,7 +56,7 @@ def _score_all(db: Session, vacancy: Vacancy) -> int:
             explanation_json=result.to_explanation_json(),
             status=status,
             rejection_reason=reason,
-            rejected_at=datetime.utcnow() if status == SuggestionStatus.REJECTED else None,
+            rejected_at=rejected_at,
         ))
     return len(candidates)
 
