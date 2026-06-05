@@ -7,7 +7,7 @@ from app.auth.service import get_current_user, require_rh
 from app.candidates import service
 from app.candidates.schemas import (
     CandidateOut, CandidateDetailOut, CandidateListOut,
-    CandidateListByVacancyOut, RejectCandidateRequest
+    CandidateListByVacancyOut, RejectCandidateRequest, AnonymizeResponse,
 )
 
 router = APIRouter(tags=["Candidates"])
@@ -50,3 +50,19 @@ def list_candidates(
 @router.get("/candidates/{candidate_id}", response_model=CandidateDetailOut, summary="Perfil completo")
 def get_candidate_detail(candidate_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return service.get_candidate_detail(db, candidate_id)
+
+@router.delete(
+    "/candidates/{candidate_id}/anonymize",
+    summary="Anonimizar dados do candidato (LGPD)",
+)
+def anonymize_candidate(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    rh: User = Depends(require_rh),
+):
+    """
+    Remove dados pessoais do candidato conforme a LGPD.
+    O registro é mantido anonimizado para preservar o histórico de rankings.
+    A ação é registrada no log de auditoria.
+    """
+    return service.anonymize_candidate(db, candidate_id, rh)
