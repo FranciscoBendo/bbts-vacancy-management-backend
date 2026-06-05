@@ -7,6 +7,8 @@ from app.vacancies.router import router as vacancies_router
 from app.approvals.router import router as approvals_router
 from app.candidates.router import router as candidates_router
 from app.imports.router import router as imports_router
+from app.connectors.router import router as connectors_router
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
@@ -23,6 +25,7 @@ app.include_router(vacancies_router)
 app.include_router(approvals_router)
 app.include_router(candidates_router)
 app.include_router(imports_router)
+app.include_router(connectors_router)
 
 @app.get("/health", tags=["Health"])
 def health(): return {"status": "ok", "sprint": 2}
