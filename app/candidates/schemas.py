@@ -65,3 +65,6 @@ class CandidateListByVacancyOut(BaseModel):
     total_before_filter: int
     score_threshold: float = 40.0
     model_config = {"from_attributes": True}
+
+class AnonymizeResponse(BaseModel):
+    message: str

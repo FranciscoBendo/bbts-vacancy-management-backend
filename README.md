@@ -62,16 +62,13 @@ app/
 │   └── router.py            # CRUD vagas + submit + rescore + GET /dashboard
 ├── approvals/               # scoring automático ao aprovar + rescore (preserva rejeições manuais)
 ├── candidates/
-│   ├── service.py           # SCORE_THRESHOLD=40% · auto-rejeição · rejeição manual
-│   └── schemas.py           # CandidateListByVacancyOut com rejected separados
+│   ├── service.py           # SCORE_THRESHOLD=40% · auto-rejeição · rejeição manual · anonimização LGPD
+│   └── schemas.py           # CandidateListByVacancyOut · AnonymizeResponse
 ├── imports/                 # PDF (Groq) + CSV + JSON · detecção de duplicatas por e-mail
-│   ├── schemas.py           # DuplicateDetectedOut · ResolveDuplicateIn
-│   ├── service.py           # check_duplicate_by_email · _import_and_log · _to_snake
-│   └── router.py            # /import/pdf com detecção · /import/pdf/resolve com 3 ações
 ├── connectors/
 │   ├── __init__.py
 │   ├── base.py              # interface ProfileConnector para integrações futuras
-│   ├── external.py          # conector randomuser.me — enriquece perfis com skills da vaga
+│   ├── external.py          # conector randomuser.me
 │   └── router.py            # POST /vacancies/:id/import-external
 ├── scoring/engine.py        # peso + obrigatórios + penalidade localização
 ├── synonyms/dictionary.py
@@ -93,8 +90,6 @@ Todas as rotas (exceto `/auth/login` e `/auth/register`) exigem o header:
 Authorization: Bearer <token>
 ```
 
-O token é retornado no login e no cadastro.
-
 ---
 
 ## Endpoints
@@ -115,7 +110,7 @@ O token é retornado no login e no cadastro.
 | PATCH | `/vacancies/:id` | Editar (só DRAFT) | Autenticado |
 | POST | `/vacancies/:id/submit` | Submeter para aprovação | REQUESTER |
 | POST | `/vacancies/:id/rescore` | Recalcular ranking | Autenticado |
-| GET | `/vacancies/dashboard` | Indicadores gerais do sistema | Autenticado |
+| GET | `/vacancies/dashboard` | Indicadores gerais | Autenticado |
 
 ### Aprovações
 | Método | Rota | Descrição | Role |
@@ -131,6 +126,7 @@ O token é retornado no login e no cadastro.
 | POST | `/vacancies/:id/candidates/:suggestion_id/reject` | Recusar candidato manualmente | RH |
 | GET | `/candidates` | Listar com filtros (skill, location) | Autenticado |
 | GET | `/candidates/:id` | Perfil completo | Autenticado |
+| DELETE | `/candidates/:id/anonymize` | Anonimizar dados pessoais (LGPD) | RH |
 
 ### Importação
 | Método | Rota | Descrição | Role |
@@ -144,7 +140,30 @@ O token é retornado no login e no cadastro.
 ### Conectores Externos
 | Método | Rota | Descrição | Role |
 |--------|------|-----------|------|
-| POST | `/vacancies/:id/import-external` | Buscar candidatos externos (randomuser.me) e importar | Autenticado |
+| POST | `/vacancies/:id/import-external` | Buscar candidatos externos (randomuser.me) | Autenticado |
+
+---
+
+## LGPD — Lei Geral de Proteção de Dados
+
+O sistema implementa os seguintes mecanismos de conformidade com a Lei 13.709/2018:
+
+### Anonimização de candidatos
+`DELETE /candidates/:id/anonymize` remove os dados pessoais do candidato sem apagar o registro:
+
+- Nome substituído por `Candidato Removido #ID`
+- E-mail, LinkedIn e localização removidos
+- Skills, experiências, formação, idiomas e certificações excluídos
+- Histórico de scores no ranking mantido de forma anonimizada
+- Ação registrada no log de auditoria com `action: CANDIDATE_ANONYMIZED_LGPD`
+
+### Log de auditoria
+Todas as ações sensíveis são registradas na tabela `audit_events` com: usuário responsável, ação realizada, entidade afetada e timestamp.
+
+### Segurança dos dados
+- Autenticação obrigatória em todas as rotas (JWT)
+- Senhas armazenadas com hash bcrypt
+- Anonimização restrita ao perfil RH
 
 ---
 
@@ -155,7 +174,7 @@ O token é retornado no login e no cadastro.
 | Campo | Descrição |
 |---|---|
 | `total_vacancies` | Total de vagas cadastradas |
-| `vacancies_by_status` | Contagem por status (draft, pending_approval, approved, rejected) |
+| `vacancies_by_status` | Contagem por status |
 | `total_candidates` | Total de candidatos na base |
 | `total_suggestions` | Total de sugestões ativas no ranking |
 | `average_score` | Score médio dos candidatos ativos |
@@ -163,29 +182,13 @@ O token é retornado no login e no cadastro.
 
 ---
 
-## Conector Externo
-
-`POST /vacancies/:id/import-external?count=10` busca candidatos via **randomuser.me** (API pública gratuita), enriquece cada perfil com skills baseadas nos requisitos da vaga e importa automaticamente, recalculando o ranking ao final.
-
-A estrutura foi projetada para substituição futura pela API da **Gupy** ou outro ATS — basta implementar um novo conector seguindo a interface em `app/connectors/base.py`.
-
----
-
 ## Rejeição de candidatos
 
 ### Automática (score < 40%)
-Ao aprovar ou rescorar uma vaga, candidatos abaixo de 40% são marcados como `REJECTED` automaticamente.
+Candidatos abaixo de 40% são marcados como `REJECTED` automaticamente ao aprovar ou rescorar.
 
 ### Manual (RH)
-O RH pode recusar qualquer candidato ativo com justificativa obrigatória. Rejeições manuais são **preservadas** ao atualizar o ranking — o rescore não as desfaz.
-
-### Resposta do ranking
-| Campo | Tipo | Descrição |
-|---|---|---|
-| `candidates` | `list` | Ativos com score ≥ 40%, ordenados por score desc |
-| `rejected` | `list` | Recusados (automático ou manual) com justificativa |
-| `total_before_filter` | `int` | Total antes da filtragem |
-| `score_threshold` | `float` | Limiar aplicado (40.0) |
+O RH pode recusar qualquer candidato ativo com justificativa obrigatória. Rejeições manuais são **preservadas** ao atualizar o ranking.
 
 ---
 
@@ -196,19 +199,6 @@ score_base     = (peso_atendido / peso_total) × 100
 penalidade_req = qtd_obrigatórios_ausentes × 30%
 penalidade_loc = 10% se localização do candidato ≠ localização da vaga
 score_final    = score_base × (1 - penalidade_req) × (1 - penalidade_loc)
-```
-
----
-
-## Fluxo de extração de PDF
-
-```
-PDF → pypdf extrai texto → Groq LLaMA 3.3 70B → JSON estruturado → normaliza sinônimos
-                                 ↓ se falhar                               ↓
-                    Fallback: extração por palavras-chave         verifica e-mail duplicado
-                                                                           ↓
-                                                          duplicata → retorna DuplicateDetectedOut
-                                                          sem duplicata → persiste e retorna CandidateDetailOut
 ```
 
 ---

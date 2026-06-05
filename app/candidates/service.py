@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 from app.models import (
     CandidateSuggestion, Candidate, Vacancy, CandidateSkill,
-    IntegrationLog, IntegrationStatus, SuggestionStatus, User
+    IntegrationLog, IntegrationStatus, SuggestionStatus, User, AuditEvent,
 )
 from app.candidates.schemas import CandidateOut, CandidateExplanation, CandidateDetailOut, CandidateListOut
 from app.synonyms.dictionary import normalize_skill
@@ -143,3 +143,38 @@ def import_from_pdf_data(db: Session, extracted: dict, filename: str) -> tuple:
                              errors_json=[{"row": 1, "message": str(e)}])
         db.add(log); db.commit()
         raise
+
+def anonymize_candidate(db: Session, candidate_id: int, rh_user: User) -> dict:
+    """
+    Anonimiza os dados pessoais do candidato conforme LGPD.
+    Não apaga o registro — mantém o histórico de scores anonimizado.
+    """
+    c = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidato não encontrado")
+
+    anon_id = f"anonimizado-{candidate_id}"
+
+    c.full_name = f"Candidato Removido #{candidate_id}"
+    c.email = None
+    c.linkedin_url = None
+    c.headline = "Dados removidos a pedido do titular (LGPD)"
+    c.location = ""
+
+    # Remove dados sensíveis das sub-tabelas
+    for skill in c.skills: db.delete(skill)
+    for exp in c.experiences: db.delete(exp)
+    for edu in c.educations: db.delete(edu)
+    for lang in c.languages: db.delete(lang)
+    for cert in c.certifications: db.delete(cert)
+
+    db.add(AuditEvent(
+        actor_user_id=rh_user.id,
+        action="CANDIDATE_ANONYMIZED_LGPD",
+        entity_type="Candidate",
+        entity_id=candidate_id,
+        metadata_json={"reason": "Solicitação de remoção de dados pessoais (LGPD)"},
+    ))
+
+    db.commit()
+    return {"message": f"Dados do candidato #{candidate_id} foram anonimizados com sucesso."}
